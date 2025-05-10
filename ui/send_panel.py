@@ -15,6 +15,7 @@ class SendPanel(wx.Panel):
         hbox_contact = wx.BoxSizer(wx.HORIZONTAL)
         lbl_contact = wx.StaticText(self, label="联系人：")
         self.txt_contact = wx.TextCtrl(self)
+        self.txt_contact.SetValue("文件传输助手")
         hbox_contact.Add(lbl_contact, 0, wx.ALIGN_CENTER_VERTICAL|wx.RIGHT, 8)
         hbox_contact.Add(self.txt_contact, 1)
         vbox.Add(hbox_contact, 0, wx.EXPAND|wx.ALL, 10)
@@ -23,6 +24,7 @@ class SendPanel(wx.Panel):
         hbox_msg = wx.BoxSizer(wx.HORIZONTAL)
         lbl_msg = wx.StaticText(self, label="消息内容：")
         self.txt_msg = wx.TextCtrl(self, style=wx.TE_MULTILINE, size=(-1, 100))
+        self.txt_msg.SetValue("123")
         hbox_msg.Add(lbl_msg, 0, wx.ALIGN_TOP|wx.RIGHT, 8)
         hbox_msg.Add(self.txt_msg, 1, wx.EXPAND)
         vbox.Add(hbox_msg, 0, wx.EXPAND|wx.LEFT|wx.RIGHT|wx.BOTTOM, 10)
@@ -32,9 +34,14 @@ class SendPanel(wx.Panel):
         self.btn_send.Bind(wx.EVT_BUTTON, self._on_send)
         vbox.Add(self.btn_send, 0, wx.ALIGN_RIGHT|wx.RIGHT|wx.BOTTOM, 10)
 
-        # 日志显示
-        self.log_ctrl = wx.TextCtrl(self, style=wx.TE_MULTILINE|wx.TE_READONLY|wx.HSCROLL, size=(-1, 120))
-        vbox.Add(self.log_ctrl, 0, wx.EXPAND|wx.ALL, 10)
+        # 日志显示和清空按钮
+        hbox_log = wx.BoxSizer(wx.HORIZONTAL)
+        self.log_ctrl = wx.TextCtrl(self, style=wx.TE_MULTILINE|wx.TE_READONLY|wx.HSCROLL, size=(-1, 220))
+        hbox_log.Add(self.log_ctrl, 1, wx.EXPAND)
+        self.btn_clear_log = wx.Button(self, label="清空日志")
+        self.btn_clear_log.Bind(wx.EVT_BUTTON, self._on_clear_log)
+        hbox_log.Add(self.btn_clear_log, 0, wx.LEFT|wx.ALIGN_BOTTOM, 8)
+        vbox.Add(hbox_log, 0, wx.EXPAND|wx.ALL, 10)
 
         self.SetSizer(vbox)
 
@@ -52,4 +59,7 @@ class SendPanel(wx.Panel):
         self.btn_send.Enable()
 
     def add_log(self, msg):
-        self.log_ctrl.AppendText(msg + "\n") 
+        self.log_ctrl.AppendText(msg + "\n")
+
+    def _on_clear_log(self, event):
+        self.log_ctrl.SetValue("") 

@@ -39,6 +39,10 @@ class MainFrame(wx.Frame):
         self.SetStatusText("Ready")
 
         panel.SetSizer(vbox)
+        panel.Layout()
+        panel.Fit()
+        self.Layout()
+        self.Fit()
 
     def show_panel(self, name):
         if self.current_panel:
