@@ -2,18 +2,18 @@
   "windows": {
     "main_window": {
       "control_type": "Window",
-      "class_name": "WeChatMainWndForPC", 
+      "class_name": "mmui::MainWindow",
       "description": "微信主窗口类名"
     },
     "search_box": {
       "control_type": "Edit",
-      "class_name": "mmui::XLineEdit",
-      "description": "搜索框控件"
+      "class_name": "",
+      "description": "搜索框控件 - 使用第一个Edit控件"
     },
     "message_input": {
       "control_type": "Edit",
-      "class_name": "mmui::ChatInputField",
-      "description": "消息输入框控件"
+      "class_name": "",
+      "description": "消息输入框控件 - 使用第一个Edit控件"
     }
   },
   "mac": {
