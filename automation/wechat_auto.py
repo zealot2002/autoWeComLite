@@ -1,7 +1,8 @@
 import platform
+import pyautogui
 import pygetwindow as gw
 import pyperclip
-from pywinauto import Desktop
+from pywinauto import Desktop, Application
 import time
 import win32gui
 import win32con
@@ -21,7 +22,10 @@ class WeChatAutomation:
         self.is_mac = platform.system() == "Darwin"
         self.is_win = platform.system() == "Windows"
         self.pywinauto = try_import_pywinauto() if self.is_win else None
-        self.window_keywords = ["weixin","WeCom","WeChat","qiyeweixin"]
+        # 修改关键词列表，使其更精确
+        self.window_keywords = ["微信", "Weixin", "WeChat", "企业微信", "WeCom"]
+        # 自动化工具窗口的关键词，用于排除
+        self.exclude_keywords = ["autoWeComLite", "automation"]
         
         # 加载配置
         self.config_manager = ConfigManager(config_path)
@@ -36,6 +40,7 @@ class WeChatAutomation:
         if self.is_win:
             self.control_configs["search_box"] = self.config_manager.get_control_config("search_box")
             self.control_configs["message_input"] = self.config_manager.get_control_config("message_input")
+            self.control_configs["main_window"] = self.config_manager.get_control_config("main_window")
             self.control_configs["search_result_list"] = self.config_manager.get_control_config("search_result_list")
             self.control_configs["search_result_item"] = self.config_manager.get_control_config("search_result_item")
             self.control_configs["chat_title"] = self.config_manager.get_control_config("chat_title")
@@ -55,34 +60,78 @@ class WeChatAutomation:
             self.logger(msg)
 
     def focus_wechat_window(self):
-        all_windows = gw.getAllTitles()
-        self.log(f"[窗口枚举] 当前所有窗口名: {all_windows}")
-        candidates = []
-        for w in all_windows:
-            if w and any(key.lower() in w.lower() for key in self.window_keywords):
-                candidates.append(w)
-        if not candidates:
-            raise RuntimeError("未找到微信/企业微信窗口或激活失败")
-        # 优先第一个匹配
-        win = gw.getWindowsWithTitle(candidates[0])[0]
-        win.activate()
-        # 强制前台
+        """直接通过配置的类名查找并激活微信窗口"""
+        self.log("[窗口查找] 开始查找微信窗口")
+        
+        if not self.is_win or not self.pywinauto:
+            raise RuntimeError("仅支持Windows平台")
+        
+        # 获取配置的微信窗口类名
+        main_window_config = self.control_configs.get("main_window", {})
+        wechat_class_name = main_window_config.get("class_name", "mmui::MainWindow")
+        
+        self.log(f"[窗口查找] 使用类名 '{wechat_class_name}' 查找微信窗口")
+        
+        # 直接查找特定类名的窗口
         try:
-            hwnd = win._hWnd
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            self.log(f"[Win32] 已调用 SetForegroundWindow: {hwnd}")
+            desktop = Desktop(backend="uia")
+            wechat_windows = []
+            
+            # 查找所有匹配类名的窗口
+            for win in desktop.windows():
+                try:
+                    title = win.window_text()
+                    class_name = win.element_info.class_name
+                    
+                    if wechat_class_name in class_name:
+                        self.log(f"[微信窗口] 通过类名找到: '{title}', class='{class_name}'")
+                        wechat_windows.append((title, win.handle))
+                except Exception as e:
+                    continue
+            
+            if not wechat_windows:
+                self.log(f"[错误] 未找到类名为 '{wechat_class_name}' 的微信窗口")
+                raise RuntimeError(f"未找到微信窗口，请确保微信已打开")
+            
+            # 如果找到多个，优先选择第一个
+            title, handle = wechat_windows[0]
+            self.log(f"[选择] 将激活窗口: '{title}'")
+            
+            # 通过handle获取窗口对象
+            win = None
+            for w in gw.getAllWindows():
+                if w._hWnd == handle:
+                    win = w
+                    break
+            
+            if not win:
+                # 备选方案：使用标题查找
+                win = gw.getWindowsWithTitle(title)[0]
+            
+            # 激活窗口
+            win.activate()
+            
+            # 强制前台
+            try:
+                win32gui.ShowWindow(handle, win32con.SW_RESTORE)
+                win32gui.SetForegroundWindow(handle)
+                self.log(f"[Win32] 已调用 SetForegroundWindow: {handle}")
+            except Exception as e:
+                self.log(f"[Win32] SetForegroundWindow 失败: {e}")
+            
+            time.sleep(0.5)
+            active = gw.getActiveWindow()
+            
+            if active and (active.title == win.title):
+                self.log(f"[确认] 已激活窗口: {win.title}")
+                return win
+            else:
+                self.log(f"[警告] 激活失败，当前活动窗口为: {active.title if active else None}")
+                raise RuntimeError("激活微信窗口失败")
+                
         except Exception as e:
-            self.log(f"[Win32] SetForegroundWindow 失败: {e}")
-        time.sleep(0.5)
-        active = gw.getActiveWindow()
-        self.log(f"尝试激活窗口: {win.title}, 当前活动窗口: {active.title if active else None}")
-        if active and (active.title == win.title):
-            self.log(f"[确认] 已激活窗口: {win.title}")
-            return win
-        else:
-            self.log(f"[警告] 激活失败，当前活动窗口为: {active.title if active else None}")
-            raise RuntimeError("未找到微信/企业微信窗口或激活失败")
+            self.log(f"[窗口查找失败] {e}")
+            raise RuntimeError(f"查找微信窗口失败: {e}")
 
     def send_message(self, contact, message):
         try:
@@ -111,37 +160,35 @@ class WeChatAutomation:
         
         # 搜索联系人
         try:
-            # 获取搜索框配置
-            search_box_config = self.control_configs.get("search_box", {})
-            search_box_class = search_box_config.get("class_name", "mmui::XLineEdit")
-            search_box_type = search_box_config.get("control_type", "Edit")
-            
-            # 使用class_name精确查找搜索框
-            self.log(f"[搜索框] 使用配置的class_name='{search_box_class}'查找搜索框")
-            search_box = main_win.child_window(class_name=search_box_class, control_type=search_box_type)
-            self.log(f"[搜索框] 精确定位搜索框 class={search_box.element_info.class_name}, handle={search_box.handle}")
+            # 精确定位搜索框
+            search_box = main_win.child_window(class_name="mmui::XLineEdit", control_type="Edit")
+            self.log(f"[搜索框] 精确定位 class={search_box.element_info.class_name}")
             
             # 聚焦并清空搜索框
             search_box.set_focus()
-            time.sleep(self.timeouts.get("typing_pause", 0.3))
+            time.sleep(0.1)
             search_box.type_keys('^a{BACKSPACE}', set_foreground=True)
-            time.sleep(self.timeouts.get("typing_pause", 0.3))
+            time.sleep(0.1)
             
             # 输入联系人名称
             self.log(f"[搜索框] 输入联系人: '{contact}'")
             pyperclip.copy(contact)
-            search_box.type_keys('^v', set_foreground=True)  # 先只输入文本，不按回车
+            search_box.type_keys('^v', set_foreground=True)
             
             # 等待搜索结果显示
-            self.log(f"[搜索框] 等待搜索结果加载")
-            time.sleep(self.timeouts.get("search_result_wait", 0.5))  # 给足够时间加载搜索结果
-            self.log(f"[搜索框] 使用回车键选择联系人")
+            search_result_wait = self.timeouts["search_result_wait"]
+            self.log(f"[搜索框] 等待搜索结果加载 (等待 {search_result_wait} 秒)")
+            time.sleep(search_result_wait)
+            
+            
+            # 直接按回车选择第一个结果
+            self.log(f"[搜索框] 按回车选择联系人")
             search_box.type_keys('{ENTER}', set_foreground=True)
             
             # 等待聊天窗口加载
-            self.log(f"[搜索框] 等待聊天窗口加载")
-            time.sleep(self.timeouts.get("chat_window_load", 0.5))  # 给足够时间加载聊天窗口
-            self.log("[搜索结果] ===== 搜索结果处理完成 =====")
+            chat_window_wait = self.timeouts["chat_window_load"]
+            self.log(f"[搜索框] 等待聊天窗口加载 (等待 {chat_window_wait} 秒)")
+            time.sleep(chat_window_wait)
         except Exception as e:
             # 严格错误处理：列出所有Edit控件信息以便调试，但不使用备选方案
             self.log(f"[搜索框查找失败] {e}")
@@ -152,7 +199,7 @@ class WeChatAutomation:
             except Exception as e2:
                 self.log(f"[调试信息获取失败] {e2}")
             
-            self.log(f"[错误] 无法精确定位搜索框(class_name=\"{search_box_class}\")，操作终止")
+            self.log(f"[错误] 无法精确定位搜索框(class_name=\"mmui::XLineEdit\")，操作终止")
             raise RuntimeError(f"无法精确定位搜索框，请确认微信版本兼容性或更新配置文件中的class_name")
         # 输入消息
         try:
@@ -180,3 +227,27 @@ class WeChatAutomation:
         except Exception as e:
             self.log(f"[消息发送] 失败: {e}")
             raise RuntimeError("发送消息失败")
+
+    def _send_message_mac(self, win, contact, message):
+        win.activate()
+        pyautogui.hotkey('command', 'f')
+        pyperclip.copy(contact)
+        pyautogui.hotkey('command', 'v')
+        
+        # 等待搜索结果显示
+        search_result_wait = self.timeouts["search_result_wait"]
+        self.log(f"[搜索框] 等待搜索结果加载 (等待 {search_result_wait} 秒)")
+        time.sleep(search_result_wait)
+        
+        pyautogui.press('enter')
+        
+        # 等待聊天窗口加载
+        chat_window_wait = self.timeouts["chat_window_load"]
+        self.log(f"[搜索框] 等待聊天窗口加载 (等待 {chat_window_wait} 秒)")
+        time.sleep(chat_window_wait)
+        
+        pyautogui.hotkey('command', 'l')  # 聚焦输入框（如支持）
+        pyperclip.copy(message)
+        pyautogui.hotkey('command', 'v')
+        pyautogui.press('enter')
+        self.log(f"[成功] 已发送消息给 {contact}")
