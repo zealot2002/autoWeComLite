@@ -49,7 +49,21 @@ class MainFrame(wx.Frame):
             self.current_panel.Hide()
         self.current_panel = self.panels[name]
         self.current_panel.Show()
+        
+        # 强制更新布局
         self.Layout()
+        
+        # 刷新面板
+        self.current_panel.Layout()
+        self.current_panel.Refresh()
+        
+        # 更新按钮状态以指示当前页面
+        self.btn_send.SetBackgroundColour(wx.NullColour if name != 'send' else wx.Colour(220, 220, 255))
+        self.btn_settings.SetBackgroundColour(wx.NullColour if name != 'settings' else wx.Colour(220, 220, 255))
+        
+        # 强制重绘界面
+        self.Refresh()
+        self.Update()
 
     def on_send_message(self, contact, message):
         # 这里后续集成自动化逻辑

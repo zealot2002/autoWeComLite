@@ -57,17 +57,20 @@ class WeChatAutomation:
         self.strategies["alternative_search_result_selection"] = self.config_manager.get_strategy("alternative_search_result_selection")
         
         # 输出当前加载的配置信息
-        self.log("[配置] 已加载以下配置:")
-        self.log(f"[配置] Windows控件配置: {json.dumps(self.control_configs, ensure_ascii=False, indent=2)}")
-        self.log(f"[配置] 等待时间配置: {json.dumps(self.timeouts, ensure_ascii=False, indent=2)}")
-        self.log(f"[配置] 策略配置: {json.dumps(self.strategies, ensure_ascii=False, indent=2)}")
+        self.log("[配置] ===== 加载的配置信息 =====")
+        main_window_class = self.control_configs.get('main_window', {}).get('class_name', '未配置')
+        self.log(f"[配置] 主窗口类名: {main_window_class}")
+        self.log(f"[配置] 搜索框类名: {self.control_configs.get('search_box', {}).get('class_name', '未配置')}")
+        self.log(f"[配置] 消息框类名: {self.control_configs.get('message_input', {}).get('class_name', '未配置')}")
+        self.log(f"[配置] 搜索结果等待时间: {self.timeouts.get('search_result_wait', 0.5)} 秒")
+        self.log(f"[配置] 聊天窗口加载等待时间: {self.timeouts.get('chat_window_load', 0.5)} 秒")
 
     def log(self, msg):
         if self.logger:
             self.logger(msg)
 
     def focus_wechat_window(self):
-        """直接通过配置的类名查找并激活微信窗口"""
+        """查找并激活微信窗口，考虑兼容性"""
         self.log("[窗口查找] 开始查找微信窗口")
         
         if not self.is_win or not self.pywinauto:
@@ -75,12 +78,6 @@ class WeChatAutomation:
         
         # 输出系统环境信息
         self.log(f"[系统信息] 操作系统: {platform.system()} {platform.release()}, Python版本: {platform.python_version()}")
-        
-        # 获取配置的微信窗口类名
-        main_window_config = self.control_configs.get("main_window", {})
-        wechat_class_name = main_window_config.get("class_name", "mmui::MainWindow")
-        
-        self.log(f"[窗口查找] 使用类名 '{wechat_class_name}' 查找微信窗口")
         
         # 输出所有窗口信息，帮助诊断
         self.log("[窗口枚举] ===== 开始枚举所有可见窗口 =====")
@@ -111,84 +108,101 @@ class WeChatAutomation:
         self.log(f"[窗口枚举] 找到 {len(all_windows)} 个窗口")
         self.log("[窗口枚举] ===== 结束窗口枚举 =====")
         
-        # 直接查找特定类名的窗口
-        try:
-            desktop = Desktop(backend="uia")
-            wechat_windows = []
-            other_wechat_windows = []
-            
-            # 查找所有匹配类名的窗口
-            for win in desktop.windows():
-                try:
-                    title = win.window_text()
-                    class_name = win.element_info.class_name
-                    handle = win.handle
-                    
-                    # 完全匹配的优先
-                    if wechat_class_name == class_name:
-                        self.log(f"[微信窗口] 精确匹配: '{title}', class='{class_name}', handle={handle}")
-                        wechat_windows.append((title, class_name, handle))
-                    # 部分匹配作为备选
-                    elif wechat_class_name in class_name:
-                        self.log(f"[微信窗口] 部分匹配: '{title}', class='{class_name}', handle={handle}")
-                        wechat_windows.append((title, class_name, handle))
-                    # 其他可能是微信的窗口
-                    elif any(key.lower() in title.lower() for key in self.window_keywords):
-                        self.log(f"[其他相关窗口] 标题匹配: '{title}', class='{class_name}', handle={handle}")
-                        other_wechat_windows.append((title, class_name, handle))
-                except Exception:
-                    pass
-            
-            if not wechat_windows:
-                if other_wechat_windows:
-                    self.log(f"[提示] 未找到类名为 '{wechat_class_name}' 的窗口，但找到以下可能的微信相关窗口:")
-                    for title, class_name, handle in other_wechat_windows:
-                        self.log(f"  候选窗口: '{title}', class='{class_name}'")
-                    self.log(f"[建议] 请修改配置文件中的 'main_window.class_name' 值为上述窗口的class_name")
-                
-                self.log(f"[错误] 未找到类名为 '{wechat_class_name}' 的微信窗口")
-                raise RuntimeError(f"未找到微信窗口，请确保微信已打开或更新配置文件中的类名")
-            
-            # 如果找到多个，优先选择第一个
-            title, class_name, handle = wechat_windows[0]
-            self.log(f"[选择] 将激活窗口: '{title}', class='{class_name}', handle={handle}")
-            
-            # 通过handle获取窗口对象
-            win = None
-            for w in gw.getAllWindows():
-                if w._hWnd == handle:
-                    win = w
-                    break
-            
-            if not win:
-                # 备选方案：使用标题查找
-                self.log(f"[警告] 无法通过handle获取窗口对象，尝试使用标题查找")
-                win = gw.getWindowsWithTitle(title)[0]
-            
-            # 激活窗口
-            win.activate()
-            
-            # 强制前台
+        # 查找微信窗口的多种方式
+        wechat_windows = []
+        
+        # 方法1: 通过配置的类名查找
+        main_window_config = self.control_configs.get("main_window", {})
+        wechat_class_name = main_window_config.get("class_name", "")
+        
+        if wechat_class_name:
+            self.log(f"[窗口查找] 方法1: 使用配置的类名 '{wechat_class_name}' 查找")
             try:
-                win32gui.ShowWindow(handle, win32con.SW_RESTORE)
-                win32gui.SetForegroundWindow(handle)
-                self.log(f"[Win32] 已调用 SetForegroundWindow: {handle}")
+                desktop = Desktop(backend="uia")
+                for win in desktop.windows():
+                    try:
+                        title = win.window_text()
+                        class_name = win.element_info.class_name
+                        handle = win.handle
+                        
+                        if class_name == wechat_class_name:  # 使用完全匹配而不是部分匹配
+                            self.log(f"[微信窗口] 通过类名完全匹配: '{title}', class='{class_name}', handle={handle}")
+                            wechat_windows.append((title, class_name, handle, 1))  # 优先级1
+                        elif wechat_class_name in class_name:  # 部分匹配作为备选
+                            self.log(f"[微信窗口] 通过类名部分匹配: '{title}', class='{class_name}', handle={handle}")
+                            wechat_windows.append((title, class_name, handle, 2))  # 优先级2
+                    except Exception:
+                        pass
             except Exception as e:
-                self.log(f"[Win32] SetForegroundWindow 失败: {e}")
-            
-            time.sleep(0.5)
-            active = gw.getActiveWindow()
-            
-            if active and (active.title == win.title):
-                self.log(f"[确认] 已激活窗口: {win.title}")
-                return win
-            else:
-                self.log(f"[警告] 激活失败，当前活动窗口为: {active.title if active else None}")
-                raise RuntimeError("激活微信窗口失败")
-                
+                self.log(f"[警告] 通过类名查找失败: {e}")
+        
+        # 方法2: 通过窗口标题关键词查找
+        if len(wechat_windows) == 0:
+            self.log(f"[窗口查找] 方法2: 通过窗口标题关键词查找")
+            try:
+                desktop = Desktop(backend="uia")
+                for win in desktop.windows():
+                    try:
+                        title = win.window_text()
+                        class_name = win.element_info.class_name
+                        handle = win.handle
+                        
+                        if any(key.lower() in title.lower() for key in self.window_keywords) and \
+                           not any(ex.lower() in title.lower() for ex in self.exclude_keywords):
+                            self.log(f"[微信窗口] 通过标题匹配: '{title}', class='{class_name}', handle={handle}")
+                            wechat_windows.append((title, class_name, handle, 3))  # 优先级3
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.log(f"[警告] 通过标题查找失败: {e}")
+        
+        # 如果未找到任何窗口，报错
+        if not wechat_windows:
+            self.log("[错误] 未找到微信窗口")
+            raise RuntimeError(f"未找到微信窗口，请确保微信已打开")
+        
+        # 按优先级排序并选择第一个窗口
+        wechat_windows.sort(key=lambda x: x[3])  # 按优先级排序
+        title, class_name, handle, _ = wechat_windows[0]
+        
+        self.log(f"[选择] 将激活窗口: '{title}', class='{class_name}', handle={handle}")
+        
+        # 如果找到的窗口类名与配置不符，建议更新配置
+        if wechat_class_name and class_name != wechat_class_name:
+            self.log(f"[建议] 请更新配置文件中的微信窗口类名: main_window.class_name='{class_name}'")
+        
+        # 通过handle获取窗口对象
+        win = None
+        for w in gw.getAllWindows():
+            if w._hWnd == handle:
+                win = w
+                break
+        
+        if not win:
+            # 备选方案：使用标题查找
+            self.log(f"[警告] 无法通过handle获取窗口对象，尝试使用标题查找")
+            win = gw.getWindowsWithTitle(title)[0]
+        
+        # 激活窗口
+        win.activate()
+        
+        # 强制前台
+        try:
+            win32gui.ShowWindow(handle, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(handle)
+            self.log(f"[Win32] 已调用 SetForegroundWindow: {handle}")
         except Exception as e:
-            self.log(f"[窗口查找失败] {e}")
-            raise RuntimeError(f"查找微信窗口失败: {e}")
+            self.log(f"[Win32] SetForegroundWindow 失败: {e}")
+        
+        time.sleep(0.5)
+        active = gw.getActiveWindow()
+        
+        if active and (active.title == win.title):
+            self.log(f"[确认] 已激活窗口: {win.title}")
+            return win
+        else:
+            self.log(f"[警告] 激活失败，当前活动窗口为: {active.title if active else None}")
+            raise RuntimeError("激活微信窗口失败")
 
     def send_message(self, contact, message):
         try:
@@ -232,8 +246,8 @@ class WeChatAutomation:
         main_win = app.window(title=win.title)
         main_win.set_focus()
         
-        # 搜索框详细情况
-        self.log("[搜索框枚举] ===== 开始查找所有Edit控件 =====")
+        # 列出所有Edit控件
+        self.log("[编辑框枚举] ===== 开始查找所有Edit控件 =====")
         edits = main_win.descendants(control_type="Edit")
         self.log(f"[Edit控件] 找到 {len(edits)} 个Edit控件:")
         for i, edit in enumerate(edits):
@@ -244,19 +258,42 @@ class WeChatAutomation:
                 self.log(f"  Edit[{i}]: class='{class_name}', text='{text}', rect={rect}")
             except:
                 pass
-        self.log("[搜索框枚举] ===== 枚举完毕 =====")
+        self.log("[编辑框枚举] ===== 枚举完毕 =====")
+        
+        if len(edits) == 0:
+            self.log("[错误] 未找到任何Edit控件，无法继续操作")
+            raise RuntimeError("未找到任何编辑框控件，请检查微信窗口状态")
         
         # 搜索联系人
         try:
-            # 获取搜索框配置
-            search_box_config = self.control_configs.get("search_box", {})
-            search_box_class = search_box_config.get("class_name", "mmui::XLineEdit")
-            search_box_type = search_box_config.get("control_type", "Edit")
+            # 查找搜索框的多种方式
+            search_box = None
             
-            # 精确定位搜索框
-            self.log(f"[搜索框] 使用类名='{search_box_class}', 类型='{search_box_type}'查找搜索框")
-            search_box = main_win.child_window(class_name=search_box_class, control_type=search_box_type)
-            self.log(f"[搜索框] 精确定位 class={search_box.element_info.class_name}, handle={search_box.handle}")
+            # 方法1: 使用配置的类名查找
+            search_box_config = self.control_configs.get("search_box", {})
+            search_box_class = search_box_config.get("class_name", "")
+            
+            if search_box_class:
+                self.log(f"[搜索框] 方法1: 使用配置的类名 '{search_box_class}' 查找")
+                try:
+                    search_box = main_win.child_window(class_name=search_box_class, control_type="Edit")
+                    self.log(f"[搜索框] 通过类名找到: class='{search_box.element_info.class_name}'")
+                except Exception as e:
+                    self.log(f"[搜索框] 通过类名查找失败: {e}")
+            
+            # 方法2: 使用第一个Edit控件作为搜索框
+            if not search_box and len(edits) > 0:
+                self.log("[搜索框] 方法2: 使用第一个Edit控件作为搜索框")
+                search_box = edits[0]
+                self.log(f"[搜索框] 使用第一个Edit控件: class='{search_box.element_info.class_name}'")
+                
+                # 如果第一个Edit的类名与配置不符，建议更新配置
+                if search_box.element_info.class_name != search_box_class:
+                    self.log(f"[建议] 请更新配置文件: 搜索框class_name='{search_box.element_info.class_name}'")
+            
+            if not search_box:
+                self.log("[错误] 未找到搜索框")
+                raise RuntimeError("未找到搜索框，无法继续操作")
             
             # 聚焦并清空搜索框
             search_box.set_focus()
@@ -290,55 +327,46 @@ class WeChatAutomation:
                     pass
             self.log("[搜索结果枚举] ===== 枚举完毕 =====")
             
-            # 直接按回车选择第一个结果
-            self.log(f"[搜索框] 按回车选择联系人")
-            search_box.type_keys('{ENTER}', set_foreground=True)
+            # 使用配置的策略选择搜索结果
+            selection_strategy = self.strategies.get("search_result_selection", "enter_key")
+            
+            if selection_strategy == "enter_key" or len(list_items) == 0:
+                # 直接按回车选择第一个结果
+                self.log(f"[搜索框] 按回车选择联系人")
+                search_box.type_keys('{ENTER}', set_foreground=True)
+            elif selection_strategy == "click_first_item" and len(list_items) > 0:
+                # 点击第一个列表项
+                list_items[0].click_input()
+                self.log(f"[搜索框] 点击第一个列表项选择联系人")
+            elif selection_strategy == "click_matching_item" and len(list_items) > 0:
+                # 查找匹配的列表项并点击
+                matched_item = None
+                for item in list_items:
+                    try:
+                        text = item.window_text()
+                        if contact.lower() in text.lower():
+                            matched_item = item
+                            break
+                    except:
+                        pass
+                
+                if matched_item:
+                    matched_item.click_input()
+                    self.log(f"[搜索框] 点击匹配的列表项选择联系人")
+                else:
+                    # 如果没找到匹配项，回退到按回车
+                    self.log(f"[搜索框] 未找到匹配项，回退到按回车")
+                    search_box.type_keys('{ENTER}', set_foreground=True)
             
             # 等待聊天窗口加载
             chat_window_wait = self.timeouts["chat_window_load"]
             self.log(f"[搜索框] 等待聊天窗口加载 (等待 {chat_window_wait} 秒)")
             time.sleep(chat_window_wait)
-        except Exception as e:
-            # 严格错误处理：输出更详细的错误信息
-            self.log(f"[搜索框查找失败] {e}")
-            try:
-                # 检查所有Edit控件，给出更明确的建议
-                edits = main_win.descendants(control_type="Edit")
-                if edits:
-                    self.log(f"[诊断信息] 找到 {len(edits)} 个Edit控件，但没有匹配的搜索框:")
-                    for i, edit in enumerate(edits):
-                        try:
-                            class_name = edit.element_info.class_name
-                            text = edit.window_text()
-                            rect = edit.rectangle()
-                            self.log(f"  Edit[{i}]: class='{class_name}', text='{text}', rect={rect}")
-                        except:
-                            pass
-                    
-                    # 建议使用第一个Edit控件作为搜索框
-                    if edits and edits[0].element_info.class_name != search_box_class:
-                        suggest_class = edits[0].element_info.class_name
-                        self.log(f"[建议] 请修改配置文件: 搜索框class_name应改为 '{suggest_class}'")
-                else:
-                    self.log("[诊断信息] 未找到任何Edit控件，请检查窗口状态")
-            except Exception as e2:
-                self.log(f"[调试信息获取失败] {e2}")
             
-            self.log(f"[错误] 无法精确定位搜索框(class_name=\"{search_box_class}\")，操作终止")
-            raise RuntimeError(f"无法精确定位搜索框，请确认微信版本兼容性或更新配置文件中的class_name")
-        
-        # 输入消息
-        try:
-            # 获取消息输入框配置
-            msg_input_config = self.control_configs.get("message_input", {})
-            msg_input_class = msg_input_config.get("class_name", "")
-            msg_input_type = msg_input_config.get("control_type", "Edit")
-            
-            self.log(f"[消息框] 使用类名='{msg_input_class}', 类型='{msg_input_type}'查找消息输入框")
-            
-            # 再次枚举所有Edit控件，用于诊断
+            # 再次枚举Edit控件，此时应该包含消息输入框
+            self.log("[聊天窗口] ===== 查找消息输入框 =====")
             chat_edits = main_win.descendants(control_type="Edit")
-            self.log(f"[聊天界面] 找到 {len(chat_edits)} 个Edit控件:")
+            self.log(f"[聊天窗口] 找到 {len(chat_edits)} 个Edit控件:")
             for i, edit in enumerate(chat_edits):
                 try:
                     class_name = edit.element_info.class_name
@@ -347,43 +375,19 @@ class WeChatAutomation:
                 except:
                     pass
             
-            # 找到输入框
+            # 输入消息
+            # 不再依赖类名查找，直接基于控件类型和序号查找
             input_box = None
             
-            # 方法1: 使用配置的类名精确查找
-            if msg_input_class:
-                try:
-                    input_box = main_win.child_window(class_name=msg_input_class, control_type=msg_input_type)
-                    self.log(f"[消息框] 通过class_name='{msg_input_class}'找到消息输入框")
-                except Exception as e:
-                    self.log(f"[消息框] 通过配置的class_name查找失败: {e}")
-                    self.log("[消息框] 尝试备选查找方法...")
+            # 在联系人对话窗口中，第一个Edit控件是消息输入框
+            if len(chat_edits) > 0:
+                input_box = chat_edits[0]  # 使用第一个Edit控件作为消息输入框
+                self.log(f"[消息框] 使用第一个Edit控件作为消息输入框: class='{input_box.element_info.class_name}'")
+            else:
+                self.log("[错误] 未找到任何可用作消息输入框的Edit控件")
+                raise RuntimeError("未找到消息输入框")
             
-            # 方法2: 如果方法1失败，尝试排除法查找
-            if not input_box and len(chat_edits) > 0:
-                # 排除搜索框，找到其他Edit控件
-                for edit in chat_edits:
-                    try:
-                        if edit.element_info.class_name != search_box_class:
-                            input_box = edit
-                            self.log(f"[消息框] 通过排除法找到消息输入框: class='{edit.element_info.class_name}'")
-                            
-                            # 建议更新配置
-                            if edit.element_info.class_name != msg_input_class:
-                                self.log(f"[建议] 更新配置文件: 消息输入框class_name应为 '{edit.element_info.class_name}'")
-                            break
-                    except:
-                        pass
-            
-            # 方法3: 如果还是没找到，使用最简单的方法 - 假设第二个Edit控件是消息框
-            if not input_box and len(chat_edits) > 1:
-                input_box = chat_edits[1]
-                self.log(f"[消息框] 使用第二个Edit控件作为消息输入框: class='{input_box.element_info.class_name}'")
-                
-                # 建议更新配置
-                if input_box.element_info.class_name != msg_input_class:
-                    self.log(f"[建议] 更新配置文件: 消息输入框class_name应为 '{input_box.element_info.class_name}'")
-            
+            # 输入消息
             if input_box:
                 self.log("[消息框] 开始输入消息")
                 input_box.set_focus()
@@ -396,11 +400,12 @@ class WeChatAutomation:
                 input_box.type_keys('{ENTER}', set_foreground=True)  # 按回车发送
                 self.log(f"[消息] 已发送消息: {message}")
             else:
-                self.log("[错误] 无法找到消息输入框，请检查控件配置")
+                self.log("[错误] 无法找到消息输入框")
                 raise RuntimeError("未找到消息输入框")
+            
         except Exception as e:
-            self.log(f"[消息发送] 失败: {e}")
-            raise RuntimeError("发送消息失败")
+            self.log(f"[错误] 发送消息失败: {e}")
+            raise RuntimeError(f"发送消息失败: {e}")
 
     def _send_message_mac(self, win, contact, message):
         win.activate()

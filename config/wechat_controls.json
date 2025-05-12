@@ -2,7 +2,7 @@
   "windows": {
     "main_window": {
       "control_type": "Window",
-      "class_name": "mmui::MainWindow",
+      "class_name": "WeChatMainWndForPC", 
       "description": "微信主窗口类名"
     },
     "search_box": {
