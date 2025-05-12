@@ -6,6 +6,7 @@ from pywinauto import Desktop, Application
 import time
 import win32gui
 import win32con
+import win32api
 from core.config_manager import ConfigManager
 import json
 
@@ -260,17 +261,19 @@ class WeChatAutomation:
                 self.log("[错误] 未找到任何Edit控件，无法继续操作")
                 raise RuntimeError("未找到任何编辑框控件，请检查微信窗口状态")
             
-            # 直接使用第二个Edit控件作为搜索框
-            if len(edits) < 2:
-                self.log("[错误] Edit控件数量不足，需要至少2个Edit控件")
-                raise RuntimeError("Edit控件数量不足，请检查微信窗口状态")
-            
             search_box = edits[0]
             self.log(f"[搜索框] 使用第二个Edit控件作为搜索框: text='{search_box.window_text()}', rect={search_box.rectangle()}")
-            
-            # 聚焦并清空搜索框
-            search_box.set_focus()
-            time.sleep(0.1)
+
+            rect = search_box.rectangle()
+            center_x = (rect.left + rect.right) // 2
+            center_y = (rect.top + rect.bottom) // 2
+            self.log(f"[搜索框] 模拟鼠标点击位置: ({center_x}, {center_y})")
+
+            # 移动鼠标到搜索框并点击
+            win32api.SetCursorPos((center_x, center_y))
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            # search_box.set_focus()
             search_box.type_keys('^a{BACKSPACE}', set_foreground=True)
             time.sleep(0.1)
             
@@ -430,6 +433,7 @@ class WeChatAutomation:
             pyperclip.copy(message)  # 复制消息到剪贴板
             input_box.type_keys('^v', set_foreground=True)  # 粘贴
             time.sleep(self.timeouts.get("typing_pause", 0.3))  # 等待消息输入完成
+            
             input_box.type_keys('{ENTER}', set_foreground=True)  # 按回车发送
             self.log(f"[消息] 已发送消息: {message}")
                 
