@@ -260,26 +260,13 @@ class WeChatAutomation:
                 self.log("[错误] 未找到任何Edit控件，无法继续操作")
                 raise RuntimeError("未找到任何编辑框控件，请检查微信窗口状态")
             
-            # 智能识别搜索框
-            search_box = None
-            for edit in edits:
-                try:
-                    text = edit.window_text()
-                    if text and "搜索" in text:
-                        search_box = edit
-                        self.log(f"[搜索框] 找到搜索框: text='{text}', rect={edit.rectangle()}")
-                        break
-                except Exception as e:
-                    self.log(f"[搜索框] 检查控件文本时出错: {e}")
-                    continue
+            # 直接使用第二个Edit控件作为搜索框
+            if len(edits) < 2:
+                self.log("[错误] Edit控件数量不足，需要至少2个Edit控件")
+                raise RuntimeError("Edit控件数量不足，请检查微信窗口状态")
             
-            # 如果没找到搜索框，使用第一个Edit控件
-            if not search_box and edits:
-                search_box = edits[0]
-                self.log(f"[搜索框] 使用第一个Edit控件作为搜索框: text='{search_box.window_text()}', rect={search_box.rectangle()}")
-            
-            if not search_box:
-                raise RuntimeError("无法找到搜索框，请检查微信窗口状态")
+            search_box = edits[0]
+            self.log(f"[搜索框] 使用第二个Edit控件作为搜索框: text='{search_box.window_text()}', rect={search_box.rectangle()}")
             
             # 聚焦并清空搜索框
             search_box.set_focus()
