@@ -1,0 +1,31 @@
+{
+  "windows": {
+    "search_box": {
+      "control_type": "Edit",
+      "class_name": "mmui::XLineEdit",
+      "description": "搜索框控件"
+    },
+    "message_input": {
+      "control_type": "Edit",
+      "class_name": "mmui::ChatInputField",
+      "description": "消息输入框控件"
+    }
+  },
+  "mac": {
+    "search_shortcut": "command+f",
+    "message_input_shortcut": "command+l",
+    "description": "Mac下使用快捷键而非控件标识"
+  },
+  "timeouts": {
+    "search_result_wait": 0.5,
+    "chat_window_load": 0.5,
+    "input_focus": 0.1,
+    "typing_pause": 0.1,
+    "description": "各操作等待时间(秒)"
+  },
+  "strategies": {
+    "search_result_selection": "enter_key",
+    "alternative_search_result_selection": "click_first_item",
+    "description": "可选值: enter_key, click_first_item, click_matching_item"
+  }
+} 

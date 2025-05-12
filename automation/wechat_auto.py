@@ -1,11 +1,11 @@
 import platform
-import pyautogui
 import pygetwindow as gw
 import pyperclip
 from pywinauto import Desktop
 import time
 import win32gui
 import win32con
+from core.config_manager import ConfigManager
 
 # Windows only
 def try_import_pywinauto():
@@ -16,12 +16,39 @@ def try_import_pywinauto():
         return None
 
 class WeChatAutomation:
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, config_path=None):
         self.logger = logger or (lambda msg: print(msg))
         self.is_mac = platform.system() == "Darwin"
         self.is_win = platform.system() == "Windows"
         self.pywinauto = try_import_pywinauto() if self.is_win else None
-        self.window_keywords = ["微信", "weixin", "企业微信"]
+        self.window_keywords = ["weixin","WeCom","WeChat","qiyeweixin"]
+        
+        # 加载配置
+        self.config_manager = ConfigManager(config_path)
+        self.control_configs = {}
+        self.timeouts = {}
+        self.strategies = {}
+        self._load_configs()
+        
+    def _load_configs(self):
+        """加载所有相关配置"""
+        # Windows平台控件配置
+        if self.is_win:
+            self.control_configs["search_box"] = self.config_manager.get_control_config("search_box")
+            self.control_configs["message_input"] = self.config_manager.get_control_config("message_input")
+            self.control_configs["search_result_list"] = self.config_manager.get_control_config("search_result_list")
+            self.control_configs["search_result_item"] = self.config_manager.get_control_config("search_result_item")
+            self.control_configs["chat_title"] = self.config_manager.get_control_config("chat_title")
+        
+        # 超时设置
+        self.timeouts["search_result_wait"] = self.config_manager.get_timeout("search_result_wait")
+        self.timeouts["chat_window_load"] = self.config_manager.get_timeout("chat_window_load")
+        self.timeouts["input_focus"] = self.config_manager.get_timeout("input_focus")
+        self.timeouts["typing_pause"] = self.config_manager.get_timeout("typing_pause")
+        
+        # 策略设置
+        self.strategies["search_result_selection"] = self.config_manager.get_strategy("search_result_selection")
+        self.strategies["alternative_search_result_selection"] = self.config_manager.get_strategy("alternative_search_result_selection")
 
     def log(self, msg):
         if self.logger:
@@ -62,8 +89,6 @@ class WeChatAutomation:
             win = self.focus_wechat_window()
             if self.is_win and self.pywinauto:
                 self._send_message_windows(win, contact, message)
-            elif self.is_mac:
-                self._send_message_mac(win, contact, message)
             else:
                 raise RuntimeError("不支持的操作系统")
         except Exception as e:
@@ -73,119 +98,85 @@ class WeChatAutomation:
     def _send_message_windows(self, win, contact, message):
         from pywinauto.application import Application
         windows = Desktop(backend="uia").windows()
-        self.log("[pywinauto窗口枚举] 所有UIA窗口：")
+        self.log("[pywinauta窗口枚举] 所有UIA窗口：")
         for w in windows:
             self.log(f"  title={w.window_text()} class={w.element_info.class_name} handle={w.handle} visible={w.is_visible()} enabled={w.is_enabled()} process={w.element_info.process_id}")
         try:
             app = Application(backend="uia").connect(title=win.title, timeout=5)
         except Exception as e:
-            self.log(f"[pywinauto连接异常] {e}")
+            self.log(f"[pywinauta连接异常] {e}")
             raise
         main_win = app.window(title=win.title)
         main_win.set_focus()
-        # 列出所有控件名和详细属性
-        try:
-            all_ctrls = main_win.descendants()
-            ctrl_info = [f"{c.window_text()} ({c.element_info.control_type}) class={c.element_info.class_name} auto_id={c.element_info.automation_id} handle={c.handle}" for c in all_ctrls]
-            self.log(f"[控件枚举] 当前窗口所有控件: {ctrl_info}")
-        except Exception as e:
-            self.log(f"[控件枚举异常] {e}")
+        
         # 搜索联系人
         try:
-            # 修改：使用class_name而非title来查找搜索框
-            search_box = main_win.child_window(class_name="mmui::XLineEdit", control_type="Edit")
-            self.log(f"[发现搜索框] class={search_box.element_info.class_name}, handle={search_box.handle}")
+            # 获取搜索框配置
+            search_box_config = self.control_configs.get("search_box", {})
+            search_box_class = search_box_config.get("class_name", "mmui::XLineEdit")
+            search_box_type = search_box_config.get("control_type", "Edit")
+            
+            # 使用class_name精确查找搜索框
+            self.log(f"[搜索框] 使用配置的class_name='{search_box_class}'查找搜索框")
+            search_box = main_win.child_window(class_name=search_box_class, control_type=search_box_type)
+            self.log(f"[搜索框] 精确定位搜索框 class={search_box.element_info.class_name}, handle={search_box.handle}")
+            
+            # 聚焦并清空搜索框
             search_box.set_focus()
+            time.sleep(self.timeouts.get("typing_pause", 0.3))
             search_box.type_keys('^a{BACKSPACE}', set_foreground=True)
+            time.sleep(self.timeouts.get("typing_pause", 0.3))
+            
+            # 输入联系人名称
+            self.log(f"[搜索框] 输入联系人: '{contact}'")
             pyperclip.copy(contact)
-            search_box.type_keys('^v{ENTER}', set_foreground=True)
+            search_box.type_keys('^v', set_foreground=True)  # 先只输入文本，不按回车
+            
+            # 等待搜索结果显示
+            self.log(f"[搜索框] 等待搜索结果加载")
+            time.sleep(self.timeouts.get("search_result_wait", 0.5))  # 给足够时间加载搜索结果
+            self.log(f"[搜索框] 使用回车键选择联系人")
+            search_box.type_keys('{ENTER}', set_foreground=True)
+            
+            # 等待聊天窗口加载
+            self.log(f"[搜索框] 等待聊天窗口加载")
+            time.sleep(self.timeouts.get("chat_window_load", 0.5))  # 给足够时间加载聊天窗口
+            self.log("[搜索结果] ===== 搜索结果处理完成 =====")
         except Exception as e:
+            # 严格错误处理：列出所有Edit控件信息以便调试，但不使用备选方案
             self.log(f"[搜索框查找失败] {e}")
-            # 备选方案：尝试查找所有Edit控件并使用第一个
             try:
                 edits = main_win.descendants(control_type="Edit")
-                edit_info = [f"{e.window_text()} class={e.element_info.class_name} auto_id={e.element_info.automation_id} handle={e.handle}" for e in edits]
+                edit_info = [f"{i}: 文本:'{e.window_text()}' 类名:{e.element_info.class_name}" for i, e in enumerate(edits)]
                 self.log(f"[调试] 所有Edit控件: {edit_info}")
-                
-                # 优先查找mmui::XLineEdit类名的控件
-                xline_edits = [e for e in edits if e.element_info.class_name == "mmui::XLineEdit"]
-                if xline_edits:
-                    search_box = xline_edits[0]
-                    self.log(f"[备选方案] 使用第一个mmui::XLineEdit控件: {search_box.element_info.class_name}")
-                else:
-                    # 如果没有找到指定类名的控件，使用第一个Edit控件
-                    search_box = edits[0]
-                    self.log(f"[备选方案] 使用第一个Edit控件: {search_box.element_info.class_name}")
-                
-                search_box.set_focus()
-                search_box.type_keys('^a{BACKSPACE}', set_foreground=True)
-                pyperclip.copy(contact)
-                search_box.type_keys('^v{ENTER}', set_foreground=True)
             except Exception as e2:
-                self.log(f"[备选方案失败] {e2}")
-                raise RuntimeError("未找到搜索框控件")
-        
-        # 等待联系人加载
-        time.sleep(1)
-        
-        # 检查聊天窗口标题
-        try:
-            chat_title = main_win.child_window(control_type="Text", found_index=0).window_text()
-            self.log(f"[当前聊天窗口] 标题: {chat_title}")
-            if contact not in chat_title:
-                self.log(f"[警告] 未检测到目标联系人'{contact}'在聊天标题'{chat_title}'中")
-        except Exception as e:
-            self.log(f"[标题检查失败] {e}")
-            texts = main_win.descendants(control_type="Text")
-            text_info = [f"{t.window_text()} class={t.element_info.class_name} auto_id={t.element_info.automation_id} handle={t.handle}" for t in texts]
-            self.log(f"[调试] 所有Text控件: {text_info}")
-            self.log("[继续] 即使未确认聊天窗口标题也继续尝试发送消息")
-        
+                self.log(f"[调试信息获取失败] {e2}")
+            
+            self.log(f"[错误] 无法精确定位搜索框(class_name=\"{search_box_class}\")，操作终止")
+            raise RuntimeError(f"无法精确定位搜索框，请确认微信版本兼容性或更新配置文件中的class_name")
         # 输入消息
         try:
-            # 查找所有Edit控件
+            # 获取消息输入框配置
+            msg_input_config = self.control_configs.get("message_input", {})
+            msg_input_class = msg_input_config.get("class_name", "")
+            
+            # 找到输入框（根据配置或通用方法）
             edits = main_win.descendants(control_type="Edit")
-            edit_info = [f"{e.window_text()} class={e.element_info.class_name} auto_id={e.element_info.automation_id} handle={e.handle}" for e in edits]
-            self.log(f"[调试] 所有Edit控件: {edit_info}")
+            input_box = main_win.child_window(class_name=msg_input_class, control_type="Edit")
             
-            # 尝试找到消息输入框
-            # 通常消息输入框是除搜索框外的另一个Edit控件，可能是第二个
-            input_box = None
-            for edit in edits:
-                # 排除搜索框（通常是mmui::XLineEdit）
-                if edit.element_info.class_name != "mmui::XLineEdit":
-                    input_box = edit
-                    break
-            
-            if not input_box and len(edits) > 1:
-                # 如果上面的条件无法找到，就使用第二个Edit控件
-                input_box = edits[1]
-            
-            if not input_box:
-                # 如果只有一个Edit控件，使用第一个
-                input_box = edits[0]
-            
-            self.log(f"[选定输入框] class={input_box.element_info.class_name}, handle={input_box.handle}")
-            input_box.set_focus()
-            time.sleep(0.5)
-            pyperclip.copy(message)
-            input_box.type_keys('^v', set_foreground=True)
-            time.sleep(0.5)
-            input_box.type_keys('{ENTER}', set_foreground=True)
+            if input_box:
+                self.log("[消息框] 开始输入消息")
+                input_box.set_focus()
+                time.sleep(self.timeouts.get("input_focus", 0.5))  # 等待聚焦
+                input_box.type_keys('^a{BACKSPACE}', set_foreground=True)  # 清空输入框
+                time.sleep(self.timeouts.get("typing_pause", 0.3))
+                pyperclip.copy(message)  # 复制消息到剪贴板
+                input_box.type_keys('^v', set_foreground=True)  # 粘贴
+                time.sleep(self.timeouts.get("typing_pause", 0.3))  # 等待消息输入完成
+                input_box.type_keys('{ENTER}', set_foreground=True)  # 按回车发送
+                self.log(f"[消息] 已发送消息: {message}")
+            else:
+                raise RuntimeError("未找到消息输入框")
         except Exception as e:
-            self.log(f"[消息发送失败] {e}")
-            raise RuntimeError("未找到消息输入框控件或发送失败")
-        
-        self.log(f"[成功] 已发送消息给 {contact}")
-
-    def _send_message_mac(self, win, contact, message):
-        win.activate()
-        pyautogui.hotkey('command', 'f')
-        pyperclip.copy(contact)
-        pyautogui.hotkey('command', 'v')
-        pyautogui.press('enter')
-        pyautogui.hotkey('command', 'l')  # 聚焦输入框（如支持）
-        pyperclip.copy(message)
-        pyautogui.hotkey('command', 'v')
-        pyautogui.press('enter')
-        self.log(f"[成功] 已发送消息给 {contact}") 
+            self.log(f"[消息发送] 失败: {e}")
+            raise RuntimeError("发送消息失败")
