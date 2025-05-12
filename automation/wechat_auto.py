@@ -260,53 +260,26 @@ class WeChatAutomation:
                 self.log("[错误] 未找到任何Edit控件，无法继续操作")
                 raise RuntimeError("未找到任何编辑框控件，请检查微信窗口状态")
             
-            # 智能识别搜索框 - 通过class和text属性综合判断
+            # 智能识别搜索框
             search_box = None
-            
-            # 策略1: 查找class为"mmui::XLineEdit"的控件
             for edit in edits:
                 try:
-                    class_name = edit.element_info.class_name
-                    rect = edit.rectangle()
-                    if class_name == "mmui::XLineEdit":
+                    text = edit.window_text()
+                    if text and "搜索" in text:
                         search_box = edit
-                        self.log(f"[搜索框] 通过class='mmui::XLineEdit'找到搜索框 位置={rect}")
+                        self.log(f"[搜索框] 找到搜索框: text='{text}', rect={edit.rectangle()}")
                         break
                 except Exception as e:
-                    self.log(f"[搜索框] 检查类名时出错: {e}")
+                    self.log(f"[搜索框] 检查控件文本时出错: {e}")
+                    continue
             
-            # 策略2: 查找text为"搜索"的控件
-            if not search_box:
-                for edit in edits:
-                    try:
-                        text = edit.window_text()
-                        rect = edit.rectangle()
-                        if text == "搜索" or "搜索" in text:
-                            search_box = edit
-                            self.log(f"[搜索框] 通过text包含'搜索'找到搜索框: '{text}' 位置={rect}")
-                            break
-                    except Exception as e:
-                        self.log(f"[搜索框] 检查文本时出错: {e}")
-            
-            # 策略3: 尝试位置判断 - 通常搜索框位于顶部
-            if not search_box and len(edits) >= 2:
-                # 按Y坐标排序，选择最上面的Edit控件
-                try:
-                    top_edit = sorted(edits, key=lambda e: e.rectangle().top)[0]
-                    search_box = top_edit
-                    self.log(f"[搜索框] 通过位置找到最上方的编辑框作为搜索框")
-                except Exception as e:
-                    self.log(f"[搜索框] 通过位置查找时出错: {e}")
-            
-            # 后备策略: 如果上述策略都失败，使用第一个Edit控件作为搜索框
-            if not search_box and len(edits) > 0:
+            # 如果没找到搜索框，使用第一个Edit控件
+            if not search_box and edits:
                 search_box = edits[0]
-                self.log(f"[搜索框] 未找到明确的搜索框，使用第一个Edit控件: class='{search_box.element_info.class_name}', text='{search_box.window_text()}'")
+                self.log(f"[搜索框] 使用第一个Edit控件作为搜索框: text='{search_box.window_text()}', rect={search_box.rectangle()}")
             
-            # 确保我们有一个搜索框
             if not search_box:
-                self.log("[错误] 无法识别搜索框")
-                raise RuntimeError("无法识别搜索框，请检查微信窗口状态")
+                raise RuntimeError("无法找到搜索框，请检查微信窗口状态")
             
             # 聚焦并清空搜索框
             search_box.set_focus()
