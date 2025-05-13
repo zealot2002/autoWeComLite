@@ -6,6 +6,7 @@ from pywinauto import Desktop, Application
 import time
 import win32gui
 import win32con
+import win32api
 from core.config_manager import ConfigManager
 import json
 
@@ -215,6 +216,38 @@ class WeChatAutomation:
             self.log(f"[错误] {e}")
             raise
 
+
+    def print_all_descendants(self, window, depth=0):
+        """递归打印窗口的所有子控件"""
+        try:
+            # 获取当前窗口的所有子控件
+            children = window.children()
+            self.log(f"{'  ' * depth}[控件] {window.element_info.control_type}, class='{window.element_info.class_name}', text='{window.window_text()}', rect={window.rectangle()}")
+            self.log(f"{'  ' * depth}[子控件] 找到 {len(children)} 个直接子控件")
+            
+            # 遍历每个子控件
+            for i, child in enumerate(children):
+                try:
+                    control_type = child.element_info.control_type
+                    class_name = child.element_info.class_name
+                    text = child.window_text()
+                    rect = child.rectangle()
+                    self.log(f"{'  ' * (depth + 1)}子控件[{i}]: type='{control_type}', class='{class_name}', text='{text}', rect={rect}")
+                    
+                    # 递归打印子控件的子控件
+                    self.print_all_descendants(child, depth + 1)
+                except Exception as e:
+                    self.log(f"{'  ' * (depth + 1)}子控件[{i}] 获取信息时出错: {e}")
+        except Exception as e:
+            self.log(f"{'  ' * depth}[错误] 枚举子控件时出错: {e}")
+            
+
+    def mouse_click(self, x,y):
+        # 移动鼠标到搜索框并点击
+        win32api.SetCursorPos((x, y))
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
     def _send_message_windows(self, win, contact, message):
         from pywinauto.application import Application
         
@@ -242,9 +275,11 @@ class WeChatAutomation:
             main_win = app.window(title=win.title)
             main_win.set_focus()
             
+            self.print_all_descendants(main_win)
+            self.log("[控件枚举] ===== 枚举完毕 =====")
             # 列出所有Edit控件
             self.log("[编辑框枚举] ===== 开始查找所有Edit控件 =====")
-            edits = main_win.descendants(control_type="Edit")
+            edits = main_win.descendants(control_type="Pane")
             self.log(f"[Edit控件] 找到 {len(edits)} 个Edit控件:")
             for i, edit in enumerate(edits):
                 try:
@@ -260,17 +295,17 @@ class WeChatAutomation:
                 self.log("[错误] 未找到任何Edit控件，无法继续操作")
                 raise RuntimeError("未找到任何编辑框控件，请检查微信窗口状态")
             
-            # 直接使用第二个Edit控件作为搜索框
-            if len(edits) < 2:
-                self.log("[错误] Edit控件数量不足，需要至少2个Edit控件")
-                raise RuntimeError("Edit控件数量不足，请检查微信窗口状态")
-            
             search_box = edits[0]
-            self.log(f"[搜索框] 使用第二个Edit控件作为搜索框: text='{search_box.window_text()}', rect={search_box.rectangle()}")
+            self.log(f"[搜索框] 使用第一个Edit控件作为搜索框: text='{search_box.window_text()}', rect={search_box.rectangle()}")
+
+            rect = search_box.rectangle()
+            center_x = (rect.left + 140)
+            center_y = (rect.top + 40)
+            self.log(f"[搜索框] 模拟鼠标点击位置: ({center_x}, {center_y})")
+            # 移动鼠标到搜索框并点击
+            self.mouse_click(center_x, center_y)
             
-            # 聚焦并清空搜索框
-            search_box.set_focus()
-            time.sleep(0.1)
+            # search_box.set_focus()
             search_box.type_keys('^a{BACKSPACE}', set_foreground=True)
             time.sleep(0.1)
             
@@ -282,155 +317,26 @@ class WeChatAutomation:
             # 等待搜索结果显示
             search_result_wait = self.timeouts["search_result_wait"]
             self.log(f"[搜索框] 等待搜索结果加载 (等待 {search_result_wait} 秒)")
-            time.sleep(search_result_wait)
+            time.sleep(1)
             
-            # 搜索结果详细情况
-            self.log("[搜索结果枚举] ===== 开始枚举搜索结果相关控件 =====")
-            list_items = main_win.descendants(control_type="ListItem")
-            self.log(f"[ListItem控件] 找到 {len(list_items)} 个ListItem控件:")
-            for i, item in enumerate(list_items):
-                try:
-                    class_name = item.element_info.class_name
-                    text = item.window_text()
-                    self.log(f"  ListItem[{i}]: class='{class_name}', text='{text}'")
-                    # 检查是否匹配联系人
-                    if contact.lower() in text.lower():
-                        self.log(f"  [匹配] ListItem[{i}] 匹配联系人 '{contact}'")
-                except:
-                    pass
-            self.log("[搜索结果枚举] ===== 枚举完毕 =====")
-            
-            # 使用配置的策略选择搜索结果
-            selection_strategy = self.strategies.get("search_result_selection", "enter_key")
-            
-            if selection_strategy == "enter_key" or len(list_items) == 0:
-                # 直接按回车选择第一个结果
-                self.log(f"[搜索框] 按回车选择联系人")
-                search_box.type_keys('{ENTER}', set_foreground=True)
-            elif selection_strategy == "click_first_item" and len(list_items) > 0:
-                # 点击第一个列表项
-                list_items[0].click_input()
-                self.log(f"[搜索框] 点击第一个列表项选择联系人")
-            elif selection_strategy == "click_matching_item" and len(list_items) > 0:
-                # 查找匹配的列表项并点击
-                matched_item = None
-                for item in list_items:
-                    try:
-                        text = item.window_text()
-                        if contact.lower() in text.lower():
-                            matched_item = item
-                            break
-                    except:
-                        pass
-                
-                if matched_item:
-                    matched_item.click_input()
-                    self.log(f"[搜索框] 点击匹配的列表项选择联系人")
-                else:
-                    # 如果没找到匹配项，回退到按回车
-                    self.log(f"[搜索框] 未找到匹配项，回退到按回车")
-                    search_box.type_keys('{ENTER}', set_foreground=True)
-            
-            # 等待聊天窗口加载
-            chat_window_wait = self.timeouts["chat_window_load"]
-            self.log(f"[搜索框] 等待聊天窗口加载 (等待 {chat_window_wait} 秒)")
-            time.sleep(chat_window_wait)
-            
-            # 再次枚举Edit控件，此时应该包含消息输入框
-            self.log("[聊天窗口] ===== 查找消息输入框 =====")
-            chat_edits = main_win.descendants(control_type="Edit")
-            self.log(f"[聊天窗口] 找到 {len(chat_edits)} 个Edit控件:")
-            for i, edit in enumerate(chat_edits):
-                try:
-                    class_name = edit.element_info.class_name
-                    text = edit.window_text()
-                    rect = edit.rectangle()
-                    self.log(f"  ChatEdit[{i}]: class='{class_name}', text='{text}', rect={rect}")
-                except:
-                    pass
-            
-            # 为搜索框和消息框查找提供建议
-            self.log("[控件识别提示] ===== 识别结果分析 =====")
-            # 根据实际情况给出建议
-            try:
-                xlineEdit_count = sum(1 for e in chat_edits if e.element_info.class_name and "XLineEdit" in e.element_info.class_name)
-                chatinputfield_count = sum(1 for e in chat_edits if e.element_info.class_name and "ChatInputField" in e.element_info.class_name)
-                search_text_count = sum(1 for e in chat_edits if e.window_text() and "搜索" in e.window_text())
-                
-                if xlineEdit_count > 0:
-                    self.log(f"[控件识别建议] 发现 {xlineEdit_count} 个XLineEdit控件，建议将其用于搜索框")
-                if chatinputfield_count > 0:
-                    self.log(f"[控件识别建议] 发现 {chatinputfield_count} 个ChatInputField控件，建议将其用于消息输入框")
-                if search_text_count > 0:
-                    self.log(f"[控件识别建议] 发现 {search_text_count} 个包含'搜索'文本的控件，建议将其用于搜索框")
-                if xlineEdit_count == 0 and chatinputfield_count == 0 and search_text_count == 0:
-                    self.log("[控件识别建议] 无法通过类名或文本识别控件，将使用位置和大小进行判断")
-            except Exception as e:
-                self.log(f"[控件识别] 分析控件类型时出错: {e}")
+            self.mouse_click(center_x, center_y + 80)
             
             # 智能识别消息输入框
-            input_box = None
+            input_box = search_box
             
-            # 策略1: 查找class为"mmui::ChatInputField"的控件
-            for edit in chat_edits:
-                try:
-                    class_name = edit.element_info.class_name
-                    if class_name == "mmui::ChatInputField":
-                        input_box = edit
-                        self.log(f"[消息框] 通过class='mmui::ChatInputField'找到消息输入框")
-                        break
-                except Exception as e:
-                    self.log(f"[消息框] 检查类名时出错: {e}")
-            
-            # 策略2: 检查尺寸和位置 - 通常消息输入框较大且位于底部
-            if not input_box and len(chat_edits) > 0:
-                try:
-                    # 选择面积最大的Edit控件作为消息输入框
-                    largest_edit = max(chat_edits, key=lambda e: 
-                        (e.rectangle().width() * e.rectangle().height()))
-                    input_box = largest_edit
-                    self.log(f"[消息框] 通过尺寸找到最大的编辑框作为消息输入框")
-                except Exception as e:
-                    self.log(f"[消息框] 通过尺寸查找时出错: {e}")
-            
-            # 策略3: 根据edit的内容判断 - 通常不包含"搜索"关键词的是消息输入框
-            if not input_box and len(chat_edits) > 1:
-                for edit in chat_edits:
-                    try:
-                        text = edit.window_text()
-                        if text != "搜索" and "搜索" not in text:
-                            # 避免使用之前已识别为搜索框的控件
-                            if search_box and edit.handle != search_box.handle:
-                                input_box = edit
-                                self.log(f"[消息框] 通过排除包含'搜索'的控件找到消息输入框")
-                                break
-                    except Exception as e:
-                        self.log(f"[消息框] 检查文本时出错: {e}")
-            
-            # 后备策略1: 如果只有一个Edit控件，使用它
-            if not input_box and len(chat_edits) == 1:
-                input_box = chat_edits[0]
-                self.log(f"[消息框] 只有一个Edit控件，将其用作消息输入框")
-            # 后备策略2: 如果有多个Edit控件但未找到明确的消息框，使用第一个
-            elif not input_box and len(chat_edits) > 0:
-                input_box = chat_edits[0]
-                self.log(f"[消息框] 未找到明确的消息输入框，使用第一个Edit控件: class='{input_box.element_info.class_name}'")
-            
-            # 确保我们有一个消息输入框
-            if not input_box:
-                self.log("[错误] 未找到任何可用作消息输入框的Edit控件")
-                raise RuntimeError("未找到消息输入框")
+            self.mouse_click(rect.right - 100, rect.bottom - 40)
             
             # 输入消息
             self.log("[消息框] 开始输入消息")
             input_box.set_focus()
             time.sleep(self.timeouts.get("input_focus", 0.5))  # 等待聚焦
-            input_box.type_keys('^a{BACKSPACE}', set_foreground=True)  # 清空输入框
+            search_box.type_keys('^a{BACKSPACE}', set_foreground=True)  # 清空输入框
             time.sleep(self.timeouts.get("typing_pause", 0.3))
             pyperclip.copy(message)  # 复制消息到剪贴板
-            input_box.type_keys('^v', set_foreground=True)  # 粘贴
+            search_box.type_keys('^v', set_foreground=True)  # 粘贴
             time.sleep(self.timeouts.get("typing_pause", 0.3))  # 等待消息输入完成
-            input_box.type_keys('{ENTER}', set_foreground=True)  # 按回车发送
+            
+            search_box.type_keys('{ENTER}', set_foreground=True)  # 按回车发送
             self.log(f"[消息] 已发送消息: {message}")
                 
         except Exception as e:
